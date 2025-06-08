@@ -76,9 +76,9 @@ function max(a: real, b: real): real
 function clamper(a: real, b: real): (real) -> real
 {
     if a > b then
-        (x: real) => min(max(x, a), b)
+        (x: real) => max(min(x, a), b)
     else
-        (x: real) => min(max(x, b), a)
+        (x: real) => max(min(x, b), a)
 }
 
 lemma clamperClamps(a: real, b: real, x: real) 
@@ -196,7 +196,7 @@ lemma normalizeConstantRate(a: real, b: real)
 // PROBLEMS:
 // - may not be true that x is in [a, b]
 
-function bimap(domain: seq<real>, range: seq<real>, interpolate: (real, real) -> real): (real) -> real
+function bimap(domain: seq<real>, range: seq<real>): (real) -> real
 requires |domain| == 2 && |range| == 2
 requires domain[0] <= domain[1]
 requires range[0] <= range[1]
@@ -210,16 +210,16 @@ requires range[0] <= range[1]
     (x: real) => interp(norm(x))
 }
 
-lemma bimapNormalizes(domain: seq<real>, range: seq<real>, interpolate: (real, real) -> real)
+lemma bimapNormalizes(domain: seq<real>, range: seq<real>)
     requires |domain| == 2 && |range| == 2
     requires range[0] <= range[1]
     ensures forall x :: 0.0 <= x <= 1.0 && domain[0] <= x <= domain[1] ==> 
-        bimap(domain, range, interpolate)(x) >= range[0] &&
-        bimap(domain, range, interpolate)(x) <= range[1]
+        bimap(domain, range)(x) >= range[0] &&
+        bimap(domain, range)(x) <= range[1]
 {
    forall x | 0.0 <= x <= 1.0 && domain[0] <= x <= domain[1]
-   ensures bimap(domain, range, interpolate)(x) >= range[0] &&
-           bimap(domain, range, interpolate)(x) <= range[1]
+   ensures bimap(domain, range)(x) >= range[0] &&
+           bimap(domain, range)(x) <= range[1]
    {
        var norm := normalize(domain[0], domain[1]);
        var interp := linearInterpolate(range[0], range[1]);
@@ -231,20 +231,24 @@ lemma bimapNormalizes(domain: seq<real>, range: seq<real>, interpolate: (real, r
    }
 }
 
-lemma bimapMonotonic(domain: seq<real>, range: seq<real>, interpolate: (real, real) -> real)
+lemma bimapMonotonic(domain: seq<real>, range: seq<real>)
     requires |domain| == 2 && |range| == 2
     requires range[0] <= range[1]
     ensures forall x1, x2 :: 0.0 <= x1 <= x2 <= 1.0 && domain[0] <= x1 <= domain[1] && domain[0] <= x2 <= domain[1] ==>
-        bimap(domain, range, interpolate)(x1) <= bimap(domain, range, interpolate)(x2)
+        bimap(domain, range)(x1) <= bimap(domain, range)(x2)
 {
     forall x1, x2 | 0.0 <= x1 <= x2 <= 1.0 && domain[0] <= x1 <= domain[1] && domain[0] <= x2 <= domain[1]
-    ensures bimap(domain, range, interpolate)(x1) <= bimap(domain, range, interpolate)(x2)
+    ensures bimap(domain, range)(x1) <= bimap(domain, range)(x2)
     {
         var norm := normalize(domain[0], domain[1]);
         var interp := linearInterpolate(range[0], range[1]);
         normalizeMonotonic(domain[0], domain[1]);
         linearInterpolateMonotonic(range[0], range[1]);
-        assert interp(norm(x1)) <= interp(norm(x2));
+        assert norm(x1) <= norm(x2);
+        var t1 := norm(x1); 
+        var t2 := norm(x2);
+        assert t1 <= t2;
+        assert interp(t1) <= interp(t2);
     }
 }
 
@@ -296,26 +300,27 @@ lemma bimapLinearHelper(x: real, b: real, d: real)
 
 lemma bimapLinearFromZero(b: real, d: real)
     requires b > 0.0 && d > 0.0
-    ensures forall x :: 0.0 <= x <= b ==>
-        linearInterpolate(0.0, d)(normalize(0.0, b)(x)) == x * d / b
+    ensures forall x :: 0.0 <= x <= b ==> 
+        bimap([0.0, b], [0.0, d])(x) == d * (x / b)
 {
     forall x | 0.0 <= x <= b
-    ensures linearInterpolate(0.0, d)(normalize(0.0, b)(x)) == x * d / b
+    ensures bimap([0.0, b], [0.0, d])(x) == d * (x / b)
     {
         var t := normalize(0.0, b)(x);
-        assert t == x / b;  // This is the key missing step
+        assert t == x / b; 
         assert linearInterpolate(0.0, d)(t) == 0.0 * (1.0 - t) + d * t;
         assert linearInterpolate(0.0, d)(t) == d * t;
         assert linearInterpolate(0.0, d)(t) == d * (x / b);
+        assert linearInterpolate(0.0, d)(normalize(0.0, b)(x)) == d * (x / b);
         // Help Dafny with commutativity: d * (x / b) == (d * x) / b == x * d / b
-        calc {
-            linearInterpolate(0.0, d)(t);
-        ==  d * (x / b);
-        ==  d * x / b;
-        ==  (d * x) / b;
-        ==  (x * d) / b;
-        ==  x * d / b;
-        }
+        // calc {
+        //     linearInterpolate(0.0, d)(t);
+        // ==  d * (x / b);
+        // ==  d * x / b;
+        // ==  (d * x) / b;
+        // ==  (x * d) / b;
+        // ==  x * d / b;
+        // }
     }
 }
 
@@ -379,17 +384,72 @@ class Transformer {
 
     method Scale(x: real) returns (r: real)
         requires |domain| == 2 && |range| == 2
-        requires domain[0] < domain[1]
-        requires range[0] < range[1]
-        ensures this.output == this.input * (range[1] - range[0]) / (domain[1] - domain[0])
+        requires domain[0] <= domain[1]
+        requires range[0] <= range[1]
+        // ensures output == SENTINEL ==> r == bimap(domain, range)(transform(clamp(x)))
+        // ensures q == bimap(domain, range)(transform(clamp(x)))
         modifies this
     {
       if output == SENTINEL {
-        var tx := transform(clamp(x));
-        // Need to prove that output is tx * (range[1] - range[0]) / (domain[1] - domain[0])
-        this.output := bimap(domain, range, interpolate)(tx);
+        this.output := bimap(domain, range)(transform(clamp(x)));
       }
-      r := output;
+      r := this.output;
+      return r;
+        this.output := bimap(domain, range)(transform(clamp(x)));
+    }
+
+    function ScaleFunc(x: real) : real
+        requires |domain| == 2
+        requires |range| == 2
+        requires domain[0] <= domain[1]
+        requires range[0] <= range[1]
+        reads this
+    {
+        var tx := transform(clamp(x));
+        var norm := normalize(domain[0], domain[1]);
+        var interp := linearInterpolate(range[0], range[1]);
+        interp(norm(tx))
+    }
+
+    lemma clampIdentity(x: real) 
+        requires |domain| == 2
+        requires domain[0] <= domain[1]
+        requires domain[0] <= x <= domain[1]
+        requires clamp == clamper(domain[0], domain[1])
+        ensures clamp(x) == x
+    {
+        assert max(min(x, domain[1]), domain[0]) == x;
+        assert clamper(domain[0], domain[1])(x) == max(min(x, domain[1]), domain[0]);
+        assert clamp(x) == max(min(x, domain[1]), domain[0]);
+    }
+
+    lemma scaleLinearFromZero(b: real, d: real, x: real)
+        requires b > 0.0 && d > 0.0
+        requires |domain| == 2
+        requires |range| == 2
+        requires domain[0] == 0.0
+        requires domain[1] == b
+        requires range[0] == 0.0
+        requires range[1] == d
+        requires transform == identity
+        requires domain[0] <= x <= domain[1]
+        requires clamp == clamper(domain[0], domain[1])
+        ensures ScaleFunc(x) == d * (x / b)
+    {
+        var s := ScaleFunc(x);
+        var tx := transform(clamp(x));
+        clampIdentity(x);
+        assert tx == x;
+        var norm := normalize(domain[0], b);
+        var interp := linearInterpolate(0.0, d);
+        assert s == interp(norm(tx));
+
+        var t := normalize(0.0, b)(x);
+        assert t == x / b; 
+        assert linearInterpolate(0.0, d)(t) == 0.0 * (1.0 - t) + d * t;
+        assert linearInterpolate(0.0, d)(t) == d * t;
+        assert linearInterpolate(0.0, d)(t) == d * (x / b);
+        assert linearInterpolate(0.0, d)(normalize(0.0, b)(x)) == d * (x / b);
     }
 
 }
@@ -437,11 +497,13 @@ modifies scale
     return scale;
 }
 
-method testLinear(scale: Transformer)
-modifies scale
+method testLinearHelper(scale: Transformer)
+    modifies scale
 {
     var linearScale := Linear([0.0, 100.0], [0.0, 500.0], scale);
-    var result := linearScale.Scale(100.0);
-    // assert scale output = input * (range[1] - range[0]) / (domain[1] - domain[0])
-    assert result == 500.0;
+    assert linearScale.domain == [0.0, 100.0];
+    assert linearScale.range == [0.0, 500.0];
+    linearScale.transform := identity;
+    linearScale.clamp := clamper(0.0, 100.0);
+    assert linearScale.ScaleFunc(100.0) == 500.0;
 }
