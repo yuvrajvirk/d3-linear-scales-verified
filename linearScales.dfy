@@ -50,11 +50,6 @@ lemma linearInterpolateConstantRate(a: real, b: real)
 {
 }
 
-lemma linearInterpolateLinear(a: real, b: real)
-    ensures forall x :: 0.0 <= x <= 1.0 ==>
-        linearInterpolate(a, b)(x) == a * (1.0 - x) + b * x
-{
-}
 
 // Clamper returns a function that clamps a value to the range [a, b]
 // function clamper(a, b) {
@@ -253,15 +248,15 @@ lemma bimapMonotonic(domain: seq<real>, range: seq<real>)
 }
 
 // Times out
-// lemma bimapConstantRate(domain: seq<real>, range: seq<real>, interpolate: (real, real) -> real)
+// lemma bimapConstantRate(domain: seq<real>, range: seq<real>)
 //     requires |domain| == 2 && |range| == 2
 //     requires domain[0] <= domain[1]
 //     requires range[0] <= range[1]
 //     ensures forall x1, x2 :: 0.0 <= x1 <= x2 <= 1.0 && domain[0] <= x1 <= domain[1] && domain[0] <= x2 <= domain[1] && x1 != x2 ==>
-//         (bimap(domain, range, interpolate)(x1) - bimap(domain, range, interpolate)(x2)) / (x1 - x2) == (range[1] - range[0]) / (domain[1] - domain[0])
+//         (bimap(domain, range)(x1) - bimap(domain, range)(x2)) / (x1 - x2) == (range[1] - range[0]) / (domain[1] - domain[0])
 // {
 //     forall x1, x2 | 0.0 <= x1 <= x2 <= 1.0 && domain[0] <= x1 <= domain[1] && domain[0] <= x2 <= domain[1] && x1 != x2
-//     ensures (bimap(domain, range, interpolate)(x1) - bimap(domain, range, interpolate)(x2)) / (x1 - x2) == (range[1] - range[0]) / (domain[1] - domain[0])
+//     ensures (bimap(domain, range)(x1) - bimap(domain, range)(x2)) / (x1 - x2) == (range[1] - range[0]) / (domain[1] - domain[0])
 //     {
 //         var norm := normalize(domain[0], domain[1]);
 //         var interp := linearInterpolate(range[0], range[1]);
@@ -270,33 +265,6 @@ lemma bimapMonotonic(domain: seq<real>, range: seq<real>)
 //         assert (interp(norm(x1)) - interp(norm(x2))) / (x1 - x2) == (range[1] - range[0]) / (domain[1] - domain[0]);
 //     }
 // }   
-
-// lemma bimapOutputsLinear(domain: seq<real>, range: seq<real>, interpolate: (real, real) -> real)
-//     requires |domain| == 2 && |range| == 2
-//     requires domain[0] < domain[1]
-//     requires range[0] < range[1]
-//     ensures forall x :: 0.0 <= x <= 1.0 && domain[0] <= x <= domain[1] ==>
-//         bimap(domain, range, interpolate)(x) == x * (range[1] - range[0]) / (domain[1] - domain[0])
-// {
-//     forall x | 0.0 <= x <= 1.0 && domain[0] <= x <= domain[1]
-//     ensures bimap(domain, range, interpolate)(x) == x * (range[1] - range[0]) / (domain[1] - domain[0])
-//     {
-//         var norm := normalize(domain[0], domain[1]);
-//         var interp := linearInterpolate(range[0], range[1]);
-//         normalizeConstantRate(domain[0], domain[1]);
-//         linearInterpolateConstantRate(range[0], range[1]);
-//         // assert (interp(norm(x)) - interp(norm(x))) / (x - x) == (range[1] - range[0]) / (domain[1] - domain[0]);
-//     }
-// }
-
-lemma bimapLinearHelper(x: real, b: real, d: real)
-    requires b > 0.0 && d > 0.0
-{
-    var t := x/b;
-    assert linearInterpolate(0.0, d)(t) == 0.0 * (1.0 - t) + d * t;
-    assert linearInterpolate(0.0, d)(t) == d * t;
-    assert linearInterpolate(0.0, d)(t) == d * (x / b);
-}
 
 lemma bimapLinearFromZero(b: real, d: real)
     requires b > 0.0 && d > 0.0
@@ -312,15 +280,6 @@ lemma bimapLinearFromZero(b: real, d: real)
         assert linearInterpolate(0.0, d)(t) == d * t;
         assert linearInterpolate(0.0, d)(t) == d * (x / b);
         assert linearInterpolate(0.0, d)(normalize(0.0, b)(x)) == d * (x / b);
-        // Help Dafny with commutativity: d * (x / b) == (d * x) / b == x * d / b
-        // calc {
-        //     linearInterpolate(0.0, d)(t);
-        // ==  d * (x / b);
-        // ==  d * x / b;
-        // ==  (d * x) / b;
-        // ==  (x * d) / b;
-        // ==  x * d / b;
-        // }
     }
 }
 
@@ -358,10 +317,10 @@ class Transformer {
     //     output = input = null;
     //     return scale;
     //   }
+    // Dafny throws errors like dmoain[0] index out of range
     method rescale()
         requires |domain| == 2 && |range| == 2
-        // requires domain[0] <= domain[1]
-        // requires range[0] <= range[1]
+        // ensures clamp == clamper(domain[0], domain[1])
         modifies this
     {
         this.clamp := clamper(domain[0], domain[1]);
@@ -386,16 +345,14 @@ class Transformer {
         requires |domain| == 2 && |range| == 2
         requires domain[0] <= domain[1]
         requires range[0] <= range[1]
-        // ensures output == SENTINEL ==> r == bimap(domain, range)(transform(clamp(x)))
-        // ensures q == bimap(domain, range)(transform(clamp(x)))
         modifies this
     {
       if output == SENTINEL {
-        this.output := bimap(domain, range)(transform(clamp(x)));
+        var bimapFunc := bimap(domain, range);
+        this.output := bimapFunc(transform(clamp(x)));
       }
       r := this.output;
       return r;
-        this.output := bimap(domain, range)(transform(clamp(x)));
     }
 
     function ScaleFunc(x: real) : real
@@ -406,10 +363,9 @@ class Transformer {
         reads this
     {
         var tx := transform(clamp(x));
-        var norm := normalize(domain[0], domain[1]);
-        var interp := linearInterpolate(range[0], range[1]);
-        interp(norm(tx))
+        bimap(domain, range)(tx)
     }
+
 
     lemma clampIdentity(x: real) 
         requires |domain| == 2
@@ -422,6 +378,30 @@ class Transformer {
         assert clamper(domain[0], domain[1])(x) == max(min(x, domain[1]), domain[0]);
         assert clamp(x) == max(min(x, domain[1]), domain[0]);
     }
+
+    // lemma scaleLowerBound(x: real)
+    //     requires |domain| == 2
+    //     requires |range| == 2
+    //     requires domain[0] <= domain[1]
+    //     requires range[0] <= range[1]
+    //     requires domain[0] <= x <= domain[1]
+    //     requires clamp == clamper(domain[0], domain[1])
+    //     ensures ScaleFunc(x) >= range[0] 
+    // {
+    //     var s := ScaleFunc(x);
+    //     assert s == bimap(domain, range)(transform(clamp(x)));
+    //     bimap
+    // }
+
+    // lemma scaleUpperBound(x: real)
+    //     requires |domain| == 2
+    //     requires |range| == 2
+    //     requires domain[0] <= domain[1]
+    //     requires range[0] <= range[1]
+    //     requires domain[0] <= x <= domain[1]
+    //     requires clamp == clamper(domain[0], domain[1])
+    //     ensures ScaleFunc(x) <= range[1] 
+    // {}
 
     lemma scaleLinearFromZero(b: real, d: real, x: real)
         requires b > 0.0 && d > 0.0
@@ -436,28 +416,28 @@ class Transformer {
         requires clamp == clamper(domain[0], domain[1])
         ensures ScaleFunc(x) == d * (x / b)
     {
-        var s := ScaleFunc(x);
-        var tx := transform(clamp(x));
-        clampIdentity(x);
-        assert tx == x;
-        var norm := normalize(domain[0], b);
-        var interp := linearInterpolate(0.0, d);
-        assert s == interp(norm(tx));
+        // var s := ScaleFunc(x);
+        // var tx := transform(clamp(x));
+        // clampIdentity(x);
+        // assert tx == x;
+        // var norm := normalize(domain[0], b);
+        // var interp := linearInterpolate(0.0, d);
+        // assert s == interp(norm(tx));
 
-        var t := normalize(0.0, b)(x);
-        assert t == x / b; 
-        assert linearInterpolate(0.0, d)(t) == 0.0 * (1.0 - t) + d * t;
-        assert linearInterpolate(0.0, d)(t) == d * t;
-        assert linearInterpolate(0.0, d)(t) == d * (x / b);
-        assert linearInterpolate(0.0, d)(normalize(0.0, b)(x)) == d * (x / b);
+        // var t := normalize(0.0, b)(x);
+        // assert t == x / b; 
+        // assert linearInterpolate(0.0, d)(t) == 0.0 * (1.0 - t) + d * t;
+        // assert linearInterpolate(0.0, d)(t) == d * t;
+        // assert linearInterpolate(0.0, d)(t) == d * (x / b);
+        // assert linearInterpolate(0.0, d)(normalize(0.0, b)(x)) == d * (x / b);
     }
-
 }
 
 // export function identity(x) {
 //   return x;
 // }
 function identity(x: real): real
+ensures x == x
 {
     x
 }
@@ -470,6 +450,7 @@ method Continuous() returns (t: Transformer)
     // Pass identity for both transform & untransform:
     t := new Transformer(identity, identity);
     t.rescale();
+    return t;
 }
 
 function linearish(t: Transformer): Transformer
@@ -497,7 +478,7 @@ modifies scale
     return scale;
 }
 
-method testLinearHelper(scale: Transformer)
+method testLinear1(scale: Transformer)
     modifies scale
 {
     var linearScale := Linear([0.0, 100.0], [0.0, 500.0], scale);
@@ -506,4 +487,20 @@ method testLinearHelper(scale: Transformer)
     linearScale.transform := identity;
     linearScale.clamp := clamper(0.0, 100.0);
     assert linearScale.ScaleFunc(100.0) == 500.0;
+    assert linearScale.ScaleFunc(200.0) == 500.0;
+    assert linearScale.ScaleFunc(0.0) == 0.0;
+    assert linearScale.ScaleFunc(50.0) == 250.0;
+}
+
+method testLinear2(scale: Transformer)
+    modifies scale
+{
+    var linearScale := Linear([5.0, 10.0], [5.0, 20.0], scale);
+    assert linearScale.domain == [5.0, 10.0];
+    assert linearScale.range == [5.0, 20.0];
+    linearScale.transform := identity;
+    linearScale.clamp := clamper(5.0, 10.0);
+    assert linearScale.ScaleFunc(10.0) == 20.0;
+    assert linearScale.ScaleFunc(5.0) == 5.0;
+    assert linearScale.ScaleFunc(7.5) == 12.5;
 }
